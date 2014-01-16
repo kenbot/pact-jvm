@@ -7,7 +7,9 @@ import com.dius.pact.model.MakeInteraction._
 import com.dius.pact.author.PactServerConfig
 import ConsumerPact._
 import akka.actor.ActorSystem
-import com.dius.pact.consumer.PactVerification.{PactWritten, ConsumerTestsFailed, PactVerified}
+import com.dius.pact.consumer.PactVerification.{ConsumerTestsFailed, PactVerified}
+import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Future}
 
 /**
  * This is what a consumer pact should roughly look like
@@ -33,13 +35,15 @@ class ConsumerPactSpec extends Specification {
         body = request.body)
     .willRespondWith(status = 200, headers = response.headers, body = response.body))
 
+    def safelyAwait[A](f: Future[A]): A = Await.result(f, Duration(10, "s"))
 
     "Report test success and write pact" in {
       val config = PactServerConfig(port = 9988)
       //TODO: make port selection automatic so that mutiple specs can run in parallel
-      pact.runConsumer(config, interaction.providerState) {
-        ConsumerService(config.url).hitEndpoint must beTrue.await
-      } must beEqualTo(PactVerified).await
+      val result = pact.runConsumer(config, interaction.providerState) {
+        safelyAwait(ConsumerService(config.url).hitEndpoint) must beTrue
+      }
+      safelyAwait(result) must beEqualTo(PactVerified)
 
       //TODO: use environment property for pact output folder
       val saved: String = io.Source.fromFile(s"target/pacts/${pact.consumer.name}-${pact.provider.name}.json").mkString
@@ -52,9 +56,10 @@ class ConsumerPactSpec extends Specification {
     "Report test failure nicely" in {
       val error = new RuntimeException("bad things happened in the test!")
       val config = PactServerConfig(port = 9987)
-      pact.runConsumer(config, interaction.providerState) {
+      val result = pact.runConsumer(config, interaction.providerState) {
         throw error
-      } must beEqualTo(ConsumerTestsFailed(error)).await
+      }
+      safelyAwait(result) must beEqualTo(ConsumerTestsFailed(error))
     }
   }
 }
